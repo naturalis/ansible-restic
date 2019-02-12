@@ -1,0 +1,101 @@
+#!/bin/bash
+#
+# MySQL Backup Script
+#  Dumps mysql databases to a file for another backup tool to pick up.
+#  Extra options for working with databases in docker containers
+#
+#
+#
+##### START CONFIG ###################################################
+
+# point to file with credentials for mysql and mysqldump
+DEFAULTS_EXTRA_FILE="--defaults-extra-file={{ restic_path }}/mysqlpasswd"
+PREFIX=mysql
+PATH=/usr/bin:/usr/sbin:/bin:/sbin:/usr/local/bin
+# Define and Create mysql backup directory if needed
+DIR={{ backuprootfolder }}/mysql
+mkdir -p $DIR
+
+# Use docker if requested
+{% if docker %}
+   # inject password config file
+   docker cp {{ restic_path }}/mysqlpasswd {{ docker_container }}:/etc/mysql/conf.d/resticbackup.cnf
+      if [ $? -eq 1 ]
+        then
+          echo "Error detected adding password config file in docker container"
+          exit 1
+      fi
+
+   # config will be readed by default, defaults extra file may be empty  
+   DEFAULTS_EXTRA_FILE=""
+
+   # use docker exec before each command. 
+   CMD="docker exec {{ docker_container }}"
+{% else %}
+CMD=""
+{% endif %}
+
+##### STOP CONFIG ####################################################
+
+set -o pipefail
+
+{% if mysqlshowcompatibility56 %}
+  outputmessage=`${CMD} mysql ${DEFAULTS_EXTRA_FILE} -s -r -N -e 'set @@global.show_compatibility_56=ON;' 2>&1`
+  if [ $? -eq 1 ]
+    then
+      echo 'Error turning on compatibility mode, error:'
+      echo $outputmessage
+      exit 1
+  fi
+{% endif %}
+
+{% if mysqlalldatabases %}
+  {% if mysqlfileperdatabase %}
+    ${CMD} mysql ${DEFAULTS_EXTRA_FILE} -s -r -N -e 'SHOW DATABASES' | while read dbname
+    do
+    ${CMD} mysqldump ${DEFAULTS_EXTRA_FILE} --opt --flush-logs --single-transaction \
+      ${EVENTS} \
+      ${dbname} | gzip -c > ${DIR}/${PREFIX}_${dbname}.sql.gz
+      if [ $? -eq 1 ]
+        then
+          echo "Error detected dumping ${dbname}"
+          exit 1
+      fi
+    done
+  {% else %}
+    ${CMD} mysqldump ${DEFAULTS_EXTRA_FILE} --opt --flush-logs --single-transaction --all-databases 2>>/var/log/restic/prebackup.log | gzip -c 2>>/var/log/restic/prebackup.log > ${DIR}/${PREFIX}.sql.gz
+      if [ $? -eq 1 ]
+        then
+          echo "Error detected dumping all-databases"
+          exit 1
+      fi
+  {% endif %}
+{% else %}
+  {% if mysqlfileperdatabase %}
+    {% for db in mysqldatabasearray %}
+      ${CMD} mysqldump ${DEFAULTS_EXTRA_FILE} --opt --flush-logs --single-transaction --databases {{ db }} 2>>/var/log/restic/prebackup.log | gzip -c 2>>/var/log/restic/prebackup.log > ${DIR}/${PREFIX}_{{ db }}.sql.gz
+      if [ $? -eq 1 ]
+        then
+          echo "Error detected dumping {{ db }}"
+          exit 1
+      fi
+    {% endfor %}
+  {% else %}
+    ${CMD} mysqldump ${DEFAULTS_EXTRA_FILE} --opt --flush-logs --single-transaction --databases {% for db in mysqldatabasearray %}{{ db }} {% end %} 2>>/var/log/restic/prebackup.log | gzip -c 2>>/var/log/restic/prebackup.log > ${DIR}/${PREFIX}.sql.gz
+      if [ $? -eq 1 ]
+        then
+          echo "Error detected dumping {% for db in mysqldatabasearray %}{{ db }} {% end %}"
+          exit 1
+      fi
+  {% endif %}
+{% endif %}
+
+ # clean up password config file inside docker container
+{% if docker %}
+   docker exec {{ docker_container }} rm /etc/mysql/conf.d/resticbackup.cnf
+      if [ $? -eq 1 ]
+        then
+          echo "Error detected removing password config file in docker container"
+          exit 1
+      fi
+{% endif %}

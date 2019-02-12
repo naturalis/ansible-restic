@@ -1,0 +1,90 @@
+# General options
+restic_upload_limit: 204800
+restic_download_limit: 204800
+restic_path: '/opt/restic'
+restic_url: ''
+restic_version: '0.9.4'
+restic_dir_owner: 'root'
+restic_dir_group: 'root'
+restic_pre_command: ''
+restic_keep_prune_job: true,
+restic_keep_prune_job_random: true    # if enabled a random hour will be taken in which a prune and forget job wil run instead of backup. 
+restic_keep_prune_job_hour: 10        # hour when random = false
+restic_keep_last: 60                  # restic forget options
+restic_keep_within_duration: '60d'    # restic forget options
+restic_disable_during_prune: true     # disable running backups during prune_job_hour and prune_job_hour+1
+restic_enable_swap: false             # enables the use of a temporary swapfile which might help with out of memory issues
+restic_swap_size: '2G'
+restic_swap_location: '/tmp/.swapfile'
+restic_time_between_backup: '1'
+restic_time_between_hourlybackup: 'yesterday'
+
+# Default check options
+chkwarninghours: 26
+chkcriticalhours: 48
+chkmaxruntimehours: 48
+
+# backup options
+mysqlbackup: false
+sambabackup: false
+pgsqlbackup: false
+mysqlscript: ''
+sambascript: ''
+pgsqlscript: ''
+pgsqlprebackupvacuum: false
+cron: false
+mysqldatabasearray: []
+pgsqlbackupuser: 'postgres'
+pgsqlalldatabases: true
+pgsqldatabasearray: []
+backuprootfolder: '/var/backup'
+mysqlbackupuser: 'backupuser'
+mysqlbackuppassword: 'backupuserpwd'
+mysqlalldatabases: true
+mysqlfileperdatabase: true
+mysqlshowcompatibility56: true   # needed for most mysql install on ubuntu 16.04LTS
+cronminute: '*/20'               # cronminute is ignored then $cronrandom is true
+cronrandom: true                 # randomize minute 0-59 for spreading backups every hour
+cronhour: '*'                    # if cronhour = * then time_between_hourlybackup is active else time_between_backup is used,. 
+restic_backup_path: '/'
+exclude_list:
+  - '/bin'
+  - '/boot'
+  - '/dev'
+  - '/lib'
+  - '/lib64'
+  - '/lost+found'
+  - '/proc'
+  - '/root'
+  - '/run'
+  - '/sbin'
+  - '/sys'
+  - '/var/backups'
+  - '/var/cache'
+  - '/var/log'
+  - '/var/tmp'
+  - '/var/spool'
+  - '/var/lib'
+  - '/tmp'
+  - '/swapfile'
+  - '/opt/puppetlabs'
+  - '/opt/sensu'
+  - '/.*'
+  - '/initrd.*'
+  - '/vmlinuz.*'
+  - '/vmlinuz'
+  - '/usr'
+docker: false
+#docker_container: 'dockerapp_db_1'
+
+# Restore options
+restorescript: false
+restorefromclient: false
+restoreinclude: '/var/backup'
+#post_restore_command: ''
+#pre_restore_command: ''
+restorecron: false
+restorecronminute: '0'
+restorecronhour: '5'
+restorecronweekday: '0'
+restorecronmonthday: '*'

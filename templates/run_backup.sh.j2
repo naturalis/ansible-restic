@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+
+# functions for preparing and cleaning up restic prune and backup jobs, currently exclusive for creating temporary swap
+function prepare {
+  # function for preparing restic run
+  echo "$(date '+%Y-%m-%d %H:%M:%S') -- Running preparation if any steps configured"
+  {% if restic_enable_swap %}
+  # Creating temporary swapfile
+    SWAPSIZE={{ restic_swap_size }}
+    SWAPLOCATION={{ restic_swap_location }}
+    echo "$(date '+%Y-%m-%d %H:%M:%S') -- Creating temporary swapfile in $SWAPLOCATION with size $SWAPSIZE"
+    fallocate -l $SWAPSIZE $SWAPLOCATION 2>&1
+    if [ $? = "1" ] ; then
+      echo "$(date '+%Y-%m-%d %H:%M:%S') -- Enabling swap : fallocate failed"
+      exit 1
+    fi
+    mkswap $SWAPLOCATION 2>&1
+    if [ $? = "1" ] ; then
+      echo "$(date '+%Y-%m-%d %H:%M:%S') -- Enabling swap : mkswap failed"
+      exit 1
+    fi
+    swapon $SWAPLOCATION 2>&1
+    if [ $? = "1" ] ; then
+      echo "$(date '+%Y-%m-%d %H:%M:%S') -- Enabling swap : swapon failed"
+      exit 1
+    fi
+  {% endif %}
+}
+
+function cleanup {
+  # Cleaning up
+  echo "$(date '+%Y-%m-%d %H:%M:%S') -- Cleaning up after backup if configured"
+  {% if restic_enable_swap %}
+  # Turning off swap
+    echo "$(date '+%Y-%m-%d %H:%M:%S') -- Turning off swap and cleaning up"
+    swapoff -a $SWAPLOCATION 2>&1
+    if [ $? = "1" ] ; then
+      echo "$(date '+%Y-%m-%d %H:%M:%S') -- Swap : swapoff -a failed"
+    fi
+    rm -f $SWAPLOCATION
+  {% endif %}
+}
+
+
+source {{ restic_path }}/config.sh
+
+### --- LOGIC --- ###
+
+export AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID"
+export AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
+export GOGC=$GOGC
+
+RUN_RESTIC="$RESTIC_BIN --repo $REPO --password-file $PASSWORD_FILE --limit-upload $UPLOAD_LIMIT_KiB --no-cache"
+BACKUP_NEEDED=0
+HOST=`hostname`
+KEEPLAST={{ restic_keep_last }}
+KEEPWITHINDURATION={{ restic_keep_within_duration }}
+
+# check if force option is passed through
+if [ "$1" = "force" ]; then
+     echo "$(date '+%Y-%m-%d %H:%M:%S') -- Forcing backup even if last backup is within parameters"
+     BACKUP_NEEDED=1
+fi
+
+# check if password file exists
+if [ ! -f $PASSWORD_FILE ]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') -- Password file $PASSWORD_FILE not found, exiting"
+    exit 1
+fi
+
+# check if restic backup process is stuck ( error: specific key exists )
+NUM_OF_ERROR=`tail /var/log/restic/cron.log -n 25 | grep 'The specified key does not exist.' | wc -l`
+if [ "$NUM_OF_ERROR" = "25" ]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') -- Specified key does not exists atleast 25 times in cron.log, doing kill and recovery of backup."
+    killall -9 $RESTIC_BIN
+    sleep 30s
+    BACKUP_NEEDED=1
+fi
+
+# check if prebackup process is running
+NUM_OF_PROC=`ps aux | grep prebackup.sh | grep -v grep | wc -l`
+if [ "$NUM_OF_PROC" != "0" ]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') -- Restic prebackup process still running. exiting"
+    ps aux | grep prebackup.sh | grep -v grep | awk '{print "Started at: "$9 " || Running for: " $10}'
+    exit 0
+fi
+
+# check if backup process is running
+NUM_OF_PROC=`ps aux | grep restic | grep backup | grep -v run_backup | wc -l`
+if [ "$NUM_OF_PROC" != "0" ]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') -- Restic backup process still running. exiting"
+    ps aux | grep restic | grep backup | awk '{print "Started at: "$9 " || Running for: " $10}'
+    exit 0
+fi
+
+# check if burp backup process is running
+NUM_OF_PROC=`ps aux | grep burp | grep -v grep | wc -l`
+if [ "$NUM_OF_PROC" = "1" ]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') -- Burp backup process still running. exiting"
+    ps aux | grep burp | awk '{print "Started at: "$9 " || Running for: " $10}'
+    exit 0
+fi
+{% if restic_keep_prune_job %}
+
+# check if forget and prune job is requested
+PRUNEHOUR={{ prune_hour }}
+CURRENTHOUR=`date +"%-H"`
+if [ "$PRUNEHOUR" = "$CURRENTHOUR" ]; then
+  echo "$(date '+%Y-%m-%d %H:%M:%S') -- Forget snapshots with keeping atleast $KEEPLAST and not forgetting earlier than $KEEPWITHINDURATION"
+    prepare
+    # get all hostnames from snapshots
+    hosts_array=( $(restic snapshots | tail -n +3 | head -n -2 | awk '{print $4}' | sort -u) )
+    for forget_host in "${hosts_array[@]}"
+      do
+        echo "$(date '+%Y-%m-%d %H:%M:%S') -- Forget snapshots with keeping atleast $KEEPLAST and not forgetting earlier than $KEEPWITHINDURATION for host ${forget_host}"
+        $RUN_RESTIC --host ${forget_host} forget --keep-last $KEEPLAST --keep-within $KEEPWITHINDURATION 2>&1 >> /var/log/restic/restic.log
+
+        # when forget action fails then try again in 1 minute, create warning state when failed for a second time. 
+        if [ $? = "1" ] ; then
+          echo "$(date '+%Y-%m-%d %H:%M:%S') -- Backup forget action first try failed, waiting 1 minute and try to clear stale locks before 2nd try"
+          sleep 1m
+          $RUN_RESTIC unlock 2>&1 >> /var/log/restic/restic.log
+          $RUN_RESTIC --host ${forget_host} forget --keep-last $KEEPLAST --keep-within $KEEPWITHINDURATION 2>&1 >> /var/log/restic/restic.log
+          if [ $? = "1" ] ; then
+           echo "$(date '+%Y-%m-%d %H:%M:%S') -- Backup forget action failed to run"
+           cleanup
+           exit 1
+          fi
+        fi
+      done
+    echo "$(date '+%Y-%m-%d %H:%M:%S') -- Prune action started"
+    $RUN_RESTIC prune 2>&1 >> /var/log/restic/restic.log
+    if [ $? = "1" ] ; then
+      echo "$(date '+%Y-%m-%d %H:%M:%S') -- Prune action first try failed, waiting 15 minutes and try to clear stale locks before 2nd try "
+      sleep 15m
+      $RUN_RESTIC unlock 2>&1 >> /var/log/restic/restic.log
+      $RUN_RESTIC prune 2>&1 >> /var/log/restic/restic.log
+      if [ $? = "1" ] ; then
+       echo "$(date '+%Y-%m-%d %H:%M:%S') -- Prune action failed to run"
+       cleanup
+       exit 1
+      fi
+      echo "$(date '+%Y-%m-%d %H:%M:%S') -- Prune action succeeded"
+      cleanup
+    fi
+fi
+{% endif %}
+
+
+{% if restic_disable_during_prune %}
+PRUNEHOUR={{ prune_hour }}
+CURRENTHOUR=`date +"%-H"`
+if [ "$PRUNEHOUR" = "$CURRENTHOUR" ] || [ "$(expr $PRUNEHOUR + 1)" = "$CURRENTHOUR" ] ; then
+  echo "$(date '+%Y-%m-%d %H:%M:%S') -- Backup disabled due to prune jobs"
+  exit 0
+fi
+{% endif %}
+
+
+
+# check if backup has been made
+SNAPSHOT_CHECK=`$RUN_RESTIC snapshots -H $HOST 2>&1`
+NUM_OF_BACKUP=`echo $SNAPSHOT_CHECK | grep "snapshots" | wc -l`
+
+# when locked, wait and skip init. 
+if [[ $SNAPSHOT_CHECK =~ "unable to create lock in backend" ]] ; then
+  echo "$(date '+%Y-%m-%d %H:%M:%S') -- Snapshot check returned lock in backend, waiting 5 minutes and unlocking before second try"
+  sleep 5m
+  $RUN_RESTIC unlock 2>&1 >> /var/log/restic/restic.log
+  SNAPSHOT_CHECK=`$RUN_RESTIC snapshots -H $HOST 2>&1`
+  NUM_OF_BACKUP=`echo $SNAPSHOT_CHECK | grep "snapshots" | wc -l`
+  if [[ $SNAPSHOT_CHECK =~ "unable to create lock in backend" ]] ; then
+     echo "$(date '+%Y-%m-%d %H:%M:%S') -- Snapshot check 2nd try also returned lock in backend, exiting backup run"
+     exit 0
+  fi
+fi
+
+if [[ $SNAPSHOT_CHECK =~ "client.RemoveObject: Access Denied" ]] ; then
+   echo "$(date '+%Y-%m-%d %H:%M:%S') -- Repository returns access denied on locks, possibly prunejob running."
+   cleanup
+   exit 0
+fi
+
+
+if [ "$NUM_OF_BACKUP" = "0" ] ; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') -- Initializing Repo and order to create backup"
+    $RUN_RESTIC init
+    BACKUP_NEEDED=1
+fi
+
+# check if repo is initialised but no backups are ever made.
+NUM_OF_BACKUP=`echo $SNAPSHOT_CHECK | grep " 0\ snapshots" | wc -l`
+if [ "$NUM_OF_BACKUP" = "1" ] ; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') -- No backups made"
+    BACKUP_NEEDED=1
+fi
+
+# check if backup is needed since yesterday
+if [ "$BACKUP_NEEDED" -eq 0 ] ; then
+   LAST_BACKUP=`echo $SNAPSHOT_CHECK | awk '{print $(NF-6)" "$(NF-5)}'`
+   LAST_BACKUP_EPOCH=`date +%s -d "$LAST_BACKUP"`
+   PREV_TIME_BACKUP=`date +%s -d "$TIME_BETWEEN_BACKUP"`
+   if [ "$PREV_TIME_BACKUP" -gt "$LAST_BACKUP_EPOCH" ] ; then
+       echo "$(date '+%Y-%m-%d %H:%M:%S') -- No backup since $TIME_BETWEEN_BACKUP, so backup needed. Last backup was $LAST_BACKUP"
+       BACKUP_NEEDED=1
+   fi
+fi
+
+if [ "$BACKUP_NEEDED" -eq 1 ] ; then
+  prepare
+  {{ pre_backup_script_command }}
+  if [ $? = "1" ] ; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') -- Error in prebackup, check /var/log/restic/prebackup.log"
+    cleanup
+    exit 2
+  fi
+  echo "$(date '+%Y-%m-%d %H:%M:%S') -- Backup initiated"
+  $RUN_RESTIC backup $BACKUP_PATH --verbose --exclude-file=$EXCLUDE_FILE 2>&1 >> /var/log/restic/restic.log
+
+# report ok when backup succeeded and start forget action
+  if [ $? = "0" ] ; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') -- Backup succeeded"
+  else
+    echo "$(date '+%Y-%m-%d %H:%M:%S') -- Backup failed"
+  fi
+  cleanup
+else
+   echo "$(date '+%Y-%m-%d %H:%M:%S') -- No backup required, Last backup was $LAST_BACKUP"
+fi

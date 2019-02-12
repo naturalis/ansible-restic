@@ -1,0 +1,12 @@
+- name: Create samba directory in backuprootfolder
+  file:
+    state: directory
+    name: '{{ backuprootfolder }}/samba'
+    mode: 0700
+
+- name: Create samba backup script from template
+  file:
+    template:
+      src: templates/sambabackup.sh.j2
+      dest: '{{ restic_path }}/sambabackup.sh'
+      mode: 0700

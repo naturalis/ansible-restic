@@ -1,0 +1,116 @@
+- name: Define backup interval should be low if backup is scheduled else bidaily backups will be made instead of daily backups.
+  set_fact:
+    _restic_time_between_backup: '{% if cronhour == "*" %}{{ restic_time_between_hourlybackup }}{% else %}{{ restic_time_between_backup }}{% endif %}'
+
+- name: Create array from scripts which will be used in the resticscript.sh
+  set_fact:
+    pre_command_array:
+      - '{{ restic_pre_command }}'
+      - '{{ sambascript }}'
+      - '{{ mysqlscript }}'
+      - '{{ pgsqlscript }}'
+
+- name: Create backup folder 
+  file:
+    state: directory
+    name: '{{ backuprootfolder }}'
+    mode: 0700
+
+- name: Create backupscript from template
+  set_fact:
+    pre_backup_script_command: '${restic_path}/prebackup.sh 2>&1 >> /var/log/restic/prebackup.log'
+  register: pre_command_set
+  when: pre_command_array|length>0
+
+- name: Create backupscript from template
+  template:
+    src: templates/prebackup.sh.j2
+    dest: '{{ restic_path}}/prebackup.sh'
+    mode: 0700
+  when: pre_command_set is succeeded
+
+- name: Create restic config script
+  template:
+    src: templates/config.sh.j2
+    dest: '{{ restic_path }}/config.sh'
+    mode: 0700
+
+- name: Create restic password file
+  copy:
+    content: '{{ restic_password }}'
+    dest: '{{ restic_path }}/password'
+    mode: 0600
+
+- name: Create restic exclude script
+  template:
+    src: templates/exclude_list.j2
+    dest: '{{ restic_path }}/exclude_list'
+    mode: 0600
+
+# TODO: include role to perform logrotation
+#- name: Create logration script for backup
+#  file { '/etc/logrotate.d/restic':
+#    ensure        => present,
+#    mode          => '0644',
+#    source        => 'puppet:///modules/restic/logrotate_restic',
+#  }
+
+- name: Create logging directory
+  file:
+    state: directory
+    dest: '/var/log/restic'
+    mode: 0700
+
+- name: Set random minute if cronrandom=true, this implies hourly backups. 
+  set_fact:
+    cronminute: '{{ 59 | random }}'
+  when: cronrandom|bool == true
+
+- name: Create restic cronjob
+  cron:
+    name: 'Initiate backup'
+    user: root
+    hour: '{{ cronhour }}'
+    minute: '{{ cronminute }}'
+    job: '{{ restic_path }}/run_backup.sh 2>&1 >> /var/log/restic/cron.log'
+  when: cron|bool == true
+
+- name: Create restic check script for usage with monitoring tools ( sensu )
+  template:
+    src: templates/chkrestic.sh.j2
+    dest: '{{ restic_path }}/chkrestic.sh'
+    mode: 0700
+
+- name: Create chkrestic symlink for running manual commands
+  file:
+    src: '{{ restic_path }}/chkrestic.sh'
+    dest: '/usr/bin/chkrestic'
+    state: link
+
+- name: Create restic run script for backups using crontab
+  set_fact:
+    prune_hour: '{{ 23 | random }}'
+  when: restic_keep_prune_job_random|bool == true
+
+- name: Create restic run script for backups using crontab
+  set_fact:
+    prune_hour: '{{ restic_keep_prune_job_hour }}'
+  when: restic_keep_prune_job_random|bool == false
+
+- name: Create run_backup script
+  template:
+    src: templates/run_backup.sh.j2
+    dest: '{{ restic_path }}/run_backup.sh'
+    mode: 0700
+
+- name: Create restic run script for running manual commands
+  template:
+    src: templates/run_restic.sh.j2
+    dest: '{{ restic_path }}/run_restic.sh'
+    mode: 0700
+
+- name: Create restic symlink for running manual commands
+  file:
+    src: '{{ restic_path }}/run_restic.sh'
+    dest: '/usr/bin/restic'
+    state: link

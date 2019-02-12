@@ -1,0 +1,19 @@
+#!/bin/bash
+#
+# Restic pre Backup Script
+# Combines multiple scripts to one.
+#
+PATH=/usr/bin:/usr/sbin:/bin:/sbin
+
+echo "$(date '+%Y-%m-%d %H:%M:%S') -- Prebackup started" >> /var/log/restic/prebackup.log
+
+{% if pre_command_array %}
+{% for task in pre_command_array %}
+{{ task }} 2>&1
+  if [ $? -eq 1 ]
+    then
+      echo 'Error running prebackup task: {{ task }}'
+      exit 1
+  fi
+{% endfor %}
+{% endif %}

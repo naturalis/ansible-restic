@@ -1,0 +1,71 @@
+#!/bin/bash
+#
+# PgSQL Backup Script
+#Dumps postgres databases to a file for another backup tool to pick up.
+#
+##### START CONFIG ###################################################
+
+USER={{ pgsqlbackupuser }}
+DIR={{ backuprootfolder }}
+PREFIX=pgsql
+
+# Define and Create mysql backup directory if needed
+DIR={{ backuprootfolder }}/pgsql
+mkdir -p $DIR
+
+{% if docker %}
+CMD="docker exec {{ docker_container }}"
+{% else %}
+CMD="su - ${USER} -c "
+chown -R ${USER}:root {{ backuprootfolder }}
+{% endif %}
+
+##### STOP CONFIG ####################################################
+PATH=/usr/bin:/usr/sbin:/bin:/sbin
+
+set -o pipefail
+
+{% if pgsqlalldatabases %}
+${CMD} "pg_dumpall" -U postgres | gzip -c > ${DIR}/${PREFIX}.gz
+    if [ $? -eq 1 ]
+      then
+        echo "Error detected dumping all progress databases"
+        exit 1
+    fi
+
+{% else %}
+{% for db in pgsqldatabasearray %}
+{% if pgsqlprebackupvacuum %}
+${CMD} "/usr/bin/psql -d {{ db }} <<EOF
+SET statement_timeout = 0;
+VACUUM ANALYZE;
+EOF" | grep -v "SET"
+    if [ $? -eq 1 ]
+      then
+        echo "Error detected during vacuum"
+        exit 1
+    fi
+{% endif %}
+${CMD} "pg_dumpall -g -U postgres > ${DIR}/${PREFIX}_{{ db }}_globals.sql"
+    if [ $? -eq 1 ]
+      then
+        echo "Error detected during globals dump of db: {{ db }}"
+        exit 1
+    fi
+${CMD} "pg_dump {{ db }} -Fc --schema-only > ${DIR}/${PREFIX}_{{ db }}_schemaonly.dump"
+    if [ $? -eq 1 ]
+      then
+        echo "Error detected during schema dump of db: {{ db }}"
+        exit 1
+    fi
+${CMD} "pg_dump {{ db }} -Fc > ${DIR}/${PREFIX}_{{ db }}.dump"
+    if [ $? -eq 1 ]
+      then
+        echo "Error detected during dump of db: {{ db }}"
+        exit 1
+    fi
+
+{% endif %}
+{% endif %}
+
+chown -R root:root {{ backuprootfolder }}

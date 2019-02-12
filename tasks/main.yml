@@ -1,0 +1,59 @@
+---
+- name: Ensure restic directories exist
+  file:
+    state: 'directory'
+    path: '{{ item }}'
+    mode: '0755'
+    owner: 'root'
+    group: 'root'
+  with_items:
+    - '/var/log/restic'
+    - '{{ restic_path }}'
+  tags:
+    - install
+
+- name: Check if binary is present
+  stat:
+    path: '{{ restic_path }}/restic_{{ restic_version }}_{{ ansible_system | lower }}_{{ _platform_map[ansible_architecture] }}'
+  register: restic_executable
+  tags:
+    - install
+
+- name: Install restic
+  include: 'install.yml'
+  when: not restic_executable.stat.exists
+  tags:
+    - install
+
+- name: Include tasks for Samba backup
+  include: sambabackup.yml
+  when: sambabackup|bool == true
+
+- name: Include tasks for MySQL backup
+  include: mysqlbackup.yml
+  when: mysqlbackup|bool == true
+
+- name: Include tasks for PostgreSQL backup
+  include: pgsqlbackup.yml
+  when: pgsqlbackup|bool == true
+
+- name: Configure restic 
+  include: config.yml
+
+- name: Restore with restic 
+  include: restore.yml
+  when: restorescript|bool == true
+
+## Add entries to sudoers sensu user must start check using sudo permissions
+#  augeas { "sudochkbackup":
+#    context => "/files/etc/sudoers",
+#    changes => [
+#      "set Cmnd_Alias[alias/name = 'SERVICES']/alias/name SERVICES",
+#      "set Cmnd_Alias[alias/name = 'SERVICES']/alias/command[1] '${restic_path}/chkrestic.sh'",
+#      "set spec[user = 'sensu']/user sensu",
+#      "set spec[user = 'sensu']/host_group/host ALL",
+#      "set spec[user = 'sensu']/host_group/command SERVICES",
+#      "set spec[user = 'sensu']/host_group/command/runas_user root",
+#      "set spec[user = 'sensu']/host_group/command/tag NOPASSWD",
+#      ],
+#  }

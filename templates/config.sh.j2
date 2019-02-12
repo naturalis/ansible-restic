@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+#
+# This file is managed by Ansible
+#
+
+BACKUP_PATH={{ restic_backup_path }}
+AWS_ACCESS_KEY_ID="{{ restic_aws_access_key }}"
+AWS_SECRET_ACCESS_KEY="{{ restic_aws_secret_key }}"
+GOGC=5
+REPO="{{ restic_aws_repo }}"
+
+UPLOAD_LIMIT_KiB={{ restic_upload_limit }}
+DOWNLOAD_LIMIT_KiB={{ restic_download_limit }}
+## time before previous backup before backup can be started
+## other possibles are (instead of yesterday)
+## -1 days
+## -24 hour
+## -5 hour
+TIME_BETWEEN_BACKUP={{ restic_time_between_backup }}
+
+PASSWORD_FILE={{ restic_path }}/password
+EXCLUDE_FILE={{ restic_path }}/exclude_list
+RESTIC_BIN={{ restic_path }}/{{ restic_binary }}

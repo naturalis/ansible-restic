@@ -1,0 +1,20 @@
+#!/bin/bash
+#
+# Samba Backup Script
+# Dumps samba database for recovery groupid's
+#
+##### START CONFIG ###################################################
+
+DIR={{ backuprootfolder }}/samba
+PATH=/usr/bin:/usr/sbin:/bin:/sbin
+
+##### STOP CONFIG ####################################################
+
+# Define and Create mysql backup directory if needed
+mkdir -p $DIR
+
+set -o pipefail
+
+cd /var/lib/samba
+/usr/bin/tdbbackup *.tdb
+mv *.bak ${DIR}
