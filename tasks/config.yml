@@ -47,13 +47,18 @@
     dest: '{{ restic_path }}/exclude_list'
     mode: 0600
 
-# TODO: include role to perform logrotation
-#- name: Create logration script for backup
-#  file { '/etc/logrotate.d/restic':
-#    ensure        => present,
-#    mode          => '0644',
-#    source        => 'puppet:///modules/restic/logrotate_restic',
-#  }
+- name: Install logrotate
+  package:
+    name: logrotate
+    state: present
+  register: logrotate_install
+
+- name: Create logrotate config
+  copy:
+    src: files/logrotate_restic
+    dest: /etc/logrotate.d/restic
+    mode: '0644'
+  when: logrotate_install is succeeded
 
 - name: Create logging directory
   file:
@@ -61,7 +66,7 @@
     dest: '/var/log/restic'
     mode: 0700
 
-- name: Set random minute if cronrandom=true, this implies hourly backups. 
+- name: Set random minute if cronrandom=true, this implies hourly backups.
   set_fact:
     cronminute: '{{ 59 | random }}'
   when: cronrandom|bool == true

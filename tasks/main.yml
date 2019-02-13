@@ -12,9 +12,13 @@
   tags:
     - install
 
+- name: Set name of binary
+  set_fact:
+    restic_binary: 'restic_{{ restic_version }}_{{ ansible_system | lower }}_{{ _platform_map[ansible_architecture] }}'
+
 - name: Check if binary is present
   stat:
-    path: '{{ restic_path }}/restic_{{ restic_version }}_{{ ansible_system | lower }}_{{ _platform_map[ansible_architecture] }}'
+    path: '{{ restic_path }}/{{ restic_binary }}'
   register: restic_executable
   tags:
     - install
