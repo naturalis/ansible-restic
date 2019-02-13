@@ -10,7 +10,7 @@
       - '{{ mysqlscript }}'
       - '{{ pgsqlscript }}'
 
-- name: Create backup folder 
+- name: Create backup folder
   file:
     state: directory
     name: '{{ backuprootfolder }}'
@@ -60,13 +60,7 @@
     mode: '0644'
   when: logrotate_install is succeeded
 
-- name: Create logging directory
-  file:
-    state: directory
-    dest: '/var/log/restic'
-    mode: 0700
-
-- name: Set random minute if cronrandom=true, this implies hourly backups.
+- name: Set random minute if cronrandom=true, this implies hourly backups
   set_fact:
     cronminute: '{{ 59 | random }}'
   when: cronrandom|bool == true
