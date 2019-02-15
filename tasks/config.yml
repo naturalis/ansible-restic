@@ -18,7 +18,7 @@
 
 - name: Create backupscript from template
   set_fact:
-    pre_backup_script_command: '${restic_path}/prebackup.sh 2>&1 >> /var/log/restic/prebackup.log'
+    pre_backup_script_command: '{{ restic_path }}/prebackup.sh 2>&1 >> /var/log/restic/prebackup.log'
   register: pre_command_set
   when: pre_command_array|length>0
 
